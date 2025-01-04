@@ -1,23 +1,83 @@
-
 const socket = io();
-let userMarker = null; 
-let currentRoute = null; 
+let userMarker = null;
+let currentRoute = null;
+let routingControl = null; // Variable to hold the routing control
 
+// Initialize the map
+const map = L.map("map").setView([22.5726, 88.3639], 12); // Default center on Kolkata
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "openstreetmap",
+}).addTo(map);
+
+// Marker icon configuration
+const redIcon = L.icon({
+    iconUrl: "https://img.icons8.com/isometric/50/FA5252/marker.png",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41],
+});
+
+const markers = {};
+
+// Fetch and display hospital data from the backend
+async function loadHospitals() {
+    try {
+        const response = await fetch('http://localhost:3000/hospitals');
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        const hospitals = await response.json();
+        if (!Array.isArray(hospitals)) {
+            throw new Error('Invalid response format: Expected an array');
+        }
+
+        hospitals.forEach((hospital) => {
+            if (hospital.latitude && hospital.longitude) {
+                const hospitalMarker = L.marker([hospital.latitude, hospital.longitude], { icon: redIcon })
+                    .addTo(map)
+                    .bindPopup(`
+                        <h3>${hospital.name}</h3>
+                        <p>${hospital.address}</p>
+                        <p>Phone: ${hospital.phone_number || hospital.phone}</p>
+                        <p>Rating: ${hospital.rating}</p>
+                    `);
+
+                // Add a click event to show route to hospital
+                hospitalMarker.on('click', () => {
+                    if (userMarker) {
+                        showRoute(userMarker.getLatLng(), hospitalMarker.getLatLng());
+                    } else {
+                        alert("Please enable location services.");
+                    }
+                });
+            } else {
+                console.warn(`Missing coordinates for hospital: ${hospital.name}`);
+            }
+        });
+    } catch (error) {
+        console.error('Error loading hospital data:', error);
+    }
+}
+
+// Get and update user location
 if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
         (position) => {
             const { latitude, longitude } = position.coords;
             socket.emit("send-location", { latitude, longitude });
 
-           
             if (!userMarker) {
                 userMarker = L.marker([latitude, longitude], { title: "You" }).addTo(map);
+                map.setView([latitude, longitude], 14);
             } else {
                 userMarker.setLatLng([latitude, longitude]);
             }
         },
         (error) => {
-            console.error(error);
+            console.error("Geolocation error:", error);
         },
         {
             enableHighAccuracy: true,
@@ -27,69 +87,9 @@ if (navigator.geolocation) {
     );
 }
 
-const map = L.map("map").setView([0, 0], 40);
-
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "openstreetmap",
-}).addTo(map);
-
-const markers = {};
-
-const redIcon = L.icon({
-    iconUrl: "https://img.icons8.com/isometric/50/FA5252/marker.png",
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-    shadowSize: [41, 41]
-});
-
-const landmarks = [
-    { name: "Helping Hands Ngo", imageUrl: " ", latitude: 22.542556, longitude: 88.3825428 },   
-    { name: "Society For Indian Children's Welfare", latitude: 22.5373426, longitude: 88.3637687 },  
-    { name: "The Hope Foundation Ltd", latitude: 22.5052385, longitude: 88.3569133 }, 
-    { name: "Hope Kolkata Foundation", latitude: 22.5209543, longitude: 88.3582089 }, 
-];
-
-
-landmarks.forEach((landmark) => {
-        const popupContent = `
-            <div>
-                <h3>${landmark.name}</h3>
-                <img src="${landmark.imageUrl}" alt="${landmark.name}" style="width: 200px; height: auto;" />
-            </div>
-        `;
-    const marker = L.marker([landmark.latitude, landmark.longitude], { icon: redIcon })
-        .addTo(map)
-        .bindPopup(landmark.name)
-        .on("click", () => {
-            if (userMarker) {
-                
-                if (currentRoute) {
-                    map.removeControl(currentRoute);
-                }
-                
-                currentRoute = L.Routing.control({
-                    waypoints: [
-                        L.latLng(userMarker.getLatLng()), 
-                        L.latLng(landmark.latitude, landmark.longitude) 
-                    ],
-                    routeWhileDragging: true,
-                    createMarker: function() { return null; }
-                }).addTo(map);
-                
-                
-                //map.fitBounds([
-                    //userMarker.getLatLng(),
-                    //[ landmark.latitude, landmark.longitude]
-               // ]);
-            }
-        });
-});
-
+// Listen for other users' locations
 socket.on("receive-location", (data) => {
     const { id, latitude, longitude } = data;
-    map.setView([latitude, longitude], 12);
     if (markers[id]) {
         markers[id].setLatLng([latitude, longitude]);
     } else {
@@ -103,3 +103,53 @@ socket.on("user-disconnected", (id) => {
         delete markers[id];
     }
 });
+
+// Load hospital markers
+loadHospitals();
+
+// Function to show the route from user's location to a hospital
+function showRoute(startLatLng, endLatLng) {
+    // Remove any existing route
+    if (routingControl) {
+        routingControl.remove();
+    }
+
+    // Temporarily remove the user marker to prevent excess markers during routing
+    if (userMarker) {
+        userMarker.remove();
+    }
+
+    // Create a new route
+    routingControl = L.Routing.control({
+        waypoints: [
+            startLatLng,
+            endLatLng
+        ],
+        routeWhileDragging: true, // Allows dragging the route
+        createMarker: function() { return null; } // Prevent additional markers along the route
+    }).addTo(map);
+
+    // Optionally, restore the user marker after the route is displayed
+    routingControl.on('routesfound', () => {
+        if (userMarker) {
+            userMarker.addTo(map); // Re-add user marker after route is shown
+        }
+    });
+}
+
+// Modified section based on your provided logic for routing
+if (userMarker) {
+    if (currentRoute) {
+        map.removeControl(currentRoute); // Remove any existing route before creating a new one
+    }
+
+    // Create a new route with the user marker as the start point
+    currentRoute = L.Routing.control({
+        waypoints: [
+            L.latLng(userMarker.getLatLng()), // Starting point from the user marker
+            L.latLng(landmark.latitude, landmark.longitude) // The hospital or landmark destination
+        ],
+        routeWhileDragging: true, // Allows route dragging
+        createMarker: function() { return null; } // Disable route markers
+    }).addTo(map);
+}
