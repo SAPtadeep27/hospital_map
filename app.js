@@ -110,7 +110,7 @@ app.get('/hospitals', async (req, res) => {
 
 // Set up CORS for HTTP routes
 app.use(cors({
-    origin: ['https://device-track.onrender.com', 'http://localhost:3000'],
+    origin: ['https://hospital-map.onrender.com/', 'http://localhost:3000'],
 methods: ['GET', 'POST', 'PUT', 'DELETE'],
   allowedHeaders: ['Content-Type'],
   credentials: true
@@ -118,7 +118,7 @@ methods: ['GET', 'POST', 'PUT', 'DELETE'],
 
 // Set custom headers for Permissions-Policy
 app.use((req, res, next) => {
-  res.setHeader("Permissions-Policy", "geolocation=(self ['https://device-track.onrender.com', 'http://localhost:3000'])");
+  res.setHeader("Permissions-Policy", "geolocation=(self ['https://hospital-map.onrender.com/', 'http://localhost:3000'])");
   next();
 });
 
